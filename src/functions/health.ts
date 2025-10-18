@@ -15,7 +15,7 @@ async function ensureInitialized() {
 export async function health(request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   const healthCheck = {
     service: 'flixsync-rating-service',
-    status: 'healthy' as const,
+    status: 'healthy' as 'healthy' | 'unhealthy',
     timestamp: new Date(),
     version: '1.0.0',
     uptime: Math.floor((Date.now() - startTime) / 1000),

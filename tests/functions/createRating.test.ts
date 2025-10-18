@@ -3,6 +3,7 @@ import { createRating } from '../../src/functions/createRating';
 import { ratingService } from '../../src/services/ratingService';
 import { HttpRequest, InvocationContext } from '@azure/functions';
 import * as azureAuth from '../../src/utils/azureAuth';
+import { ValidationError } from '../../src/utils/validation';
 import * as validation from '../../src/utils/validation';
 
 vi.mock('../../src/services/ratingService');
@@ -12,7 +13,13 @@ vi.mock('../../src/config/database', () => ({
   })
 }));
 vi.mock('../../src/utils/azureAuth');
-vi.mock('../../src/utils/validation');
+vi.mock('../../src/utils/validation', async () => {
+  const actual = await vi.importActual<typeof import('../../src/utils/validation')>('../../src/utils/validation');
+  return {
+    ...actual,
+    validateCreateRating: vi.fn(),
+  };
+});
 
 describe('Create Rating Function', () => {
   let mockRequest: Partial<HttpRequest>;
@@ -83,7 +90,7 @@ describe('Create Rating Function', () => {
 
     vi.mocked(azureAuth.getUserIdFromRequest).mockReturnValue('user-123');
     vi.mocked(validation.validateCreateRating).mockImplementation(() => {
-      throw new validation.ValidationError('rating must be between 0 and 10');
+      throw new ValidationError('rating must be between 0 and 10');
     });
 
     const response = await createRating(mockRequest as HttpRequest, mockContext as InvocationContext);
