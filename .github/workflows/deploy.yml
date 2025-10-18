@@ -11,7 +11,7 @@ env:
   AZURE_LOCATION: centralus
   AZURE_STORAGE_ACCOUNT: flixsyncratingstore
   COSMOS_ACCOUNT: flixsync-cosmos
-  COSMOS_DATABASE_NAME: flixsync
+  COSMOS_DATABASE_NAME: flixsync-rating-database
   COSMOS_CONTAINER_NAME: ratings
   NODE_VERSION: '22'
 
