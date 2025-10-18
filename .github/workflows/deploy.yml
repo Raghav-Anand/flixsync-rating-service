@@ -1,0 +1,230 @@
+name: Deploy Rating Service to Azure Functions
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AZURE_FUNCTIONAPP_NAME: flixsync-rating-service
+  AZURE_RESOURCE_GROUP: flixsync
+  AZURE_LOCATION: centralus
+  AZURE_STORAGE_ACCOUNT: flixsyncratingstore
+  COSMOS_ACCOUNT: flixsync-cosmos
+  COSMOS_DATABASE_NAME: flixsync
+  COSMOS_CONTAINER_NAME: ratings
+  NODE_VERSION: '22'
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build application
+      run: npm run build
+
+    - name: Run tests
+      run: npm run test:run
+      env:
+        NODE_ENV: test
+        JWT_SECRET: test-secret
+        COSMOS_ENDPOINT: https://test.documents.azure.com:443/
+        COSMOS_KEY: test-key
+        COSMOS_DATABASE_NAME: flixsync
+        COSMOS_CONTAINER_NAME: ratings
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: functionapp-build
+        path: |
+          dist/
+          package*.json
+          node_modules/
+          host.json
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    environment: production
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: functionapp-build
+        path: ./build
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Create Azure Resources
+      run: |
+        # Create resource group if it doesn't exist
+        if ! az group show --name ${{ env.AZURE_RESOURCE_GROUP }} &>/dev/null; then
+          echo "Creating resource group ${{ env.AZURE_RESOURCE_GROUP }}..."
+          az group create \
+            --name ${{ env.AZURE_RESOURCE_GROUP }} \
+            --location ${{ env.AZURE_LOCATION }}
+        else
+          echo "Resource group ${{ env.AZURE_RESOURCE_GROUP }} already exists"
+        fi
+
+        # Create storage account if it doesn't exist
+        if ! az storage account show --name ${{ env.AZURE_STORAGE_ACCOUNT }} --resource-group ${{ env.AZURE_RESOURCE_GROUP }} &>/dev/null; then
+          echo "Creating storage account ${{ env.AZURE_STORAGE_ACCOUNT }}..."
+          az storage account create \
+            --name ${{ env.AZURE_STORAGE_ACCOUNT }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --location ${{ env.AZURE_LOCATION }} \
+            --sku Standard_LRS \
+            --kind StorageV2
+        else
+          echo "Storage account ${{ env.AZURE_STORAGE_ACCOUNT }} already exists"
+        fi
+
+        # Create Function App if it doesn't exist (Consumption plan auto-created)
+        if ! az functionapp show --name ${{ env.AZURE_FUNCTIONAPP_NAME }} --resource-group ${{ env.AZURE_RESOURCE_GROUP }} &>/dev/null; then
+          echo "Creating function app ${{ env.AZURE_FUNCTIONAPP_NAME }}..."
+          az functionapp create \
+            --name ${{ env.AZURE_FUNCTIONAPP_NAME }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --consumption-plan-location ${{ env.AZURE_LOCATION }} \
+            --runtime node \
+            --runtime-version 22 \
+            --functions-version 4 \
+            --storage-account ${{ env.AZURE_STORAGE_ACCOUNT }} \
+            --os-type Linux
+        else
+          echo "Function app ${{ env.AZURE_FUNCTIONAPP_NAME }} already exists"
+        fi
+
+        # Enable Managed Identity for Function App
+        echo "Enabling managed identity for Function App..."
+        az functionapp identity assign \
+          --name ${{ env.AZURE_FUNCTIONAPP_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }}
+
+        # Get the managed identity principal ID
+        PRINCIPAL_ID=$(az functionapp identity show \
+          --name ${{ env.AZURE_FUNCTIONAPP_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --query principalId -o tsv)
+
+        echo "Function App Principal ID: $PRINCIPAL_ID"
+
+        # Assign Cosmos DB Built-in Data Contributor role to the managed identity
+        echo "Assigning Cosmos DB Data Contributor role to Function App..."
+        az cosmosdb sql role assignment create \
+          --account-name ${{ env.COSMOS_ACCOUNT }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --role-definition-name "Cosmos DB Built-in Data Contributor" \
+          --principal-id $PRINCIPAL_ID \
+          --scope "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/${{ env.AZURE_RESOURCE_GROUP }}/providers/Microsoft.DocumentDB/databaseAccounts/${{ env.COSMOS_ACCOUNT }}" \
+          || echo "Role assignment already exists or failed - continuing..."
+
+    - name: Configure Function App Settings
+      uses: azure/appservice-settings@v1
+      with:
+        app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
+        app-settings-json: |
+          [
+            {
+              "name": "NODE_ENV",
+              "value": "production",
+              "slotSetting": false
+            },
+            {
+              "name": "AzureWebJobsFeatureFlags",
+              "value": "EnableWorkerIndexing",
+              "slotSetting": false
+            },
+            {
+              "name": "JWT_SECRET",
+              "value": "${{ secrets.JWT_SECRET }}",
+              "slotSetting": false
+            },
+            {
+              "name": "JWT_EXPIRES_IN",
+              "value": "1h",
+              "slotSetting": false
+            },
+            {
+              "name": "JWT_REFRESH_EXPIRES_IN",
+              "value": "7d",
+              "slotSetting": false
+            },
+            {
+              "name": "COSMOS_ENDPOINT",
+              "value": "${{ secrets.COSMOS_ENDPOINT }}",
+              "slotSetting": false
+            },
+            {
+              "name": "COSMOS_DATABASE_NAME",
+              "value": "${{ env.COSMOS_DATABASE_NAME }}",
+              "slotSetting": false
+            },
+            {
+              "name": "COSMOS_CONTAINER_NAME",
+              "value": "${{ env.COSMOS_CONTAINER_NAME }}",
+              "slotSetting": false
+            }
+          ]
+
+    - name: 'Deploy to Azure Functions'
+      uses: Azure/functions-action@v1
+      with:
+        app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
+        package: build
+        respect-funcignore: true
+
+    - name: Azure logout
+      run: az logout
+      if: always()
+
+  health-check:
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Wait for deployment
+      run: sleep 30
+
+    - name: Health check
+      run: |
+        response=$(curl -s -o /dev/null -w "%{http_code}" https://${{ env.AZURE_FUNCTIONAPP_NAME }}.azurewebsites.net/api/v1/health)
+        if [ $response != "200" ]; then
+          echo "Health check failed with status code: $response"
+          exit 1
+        fi
+        echo "Health check passed!"
+
+    - name: Test API endpoints
+      run: |
+        echo "Rating service deployed successfully!"
+        echo "Service URL: https://${{ env.AZURE_FUNCTIONAPP_NAME }}.azurewebsites.net"
+        echo "Health endpoint: https://${{ env.AZURE_FUNCTIONAPP_NAME }}.azurewebsites.net/api/v1/health"

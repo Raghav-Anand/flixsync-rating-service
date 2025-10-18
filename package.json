@@ -1,0 +1,49 @@
+{
+  "name": "flixsync-rating-service",
+  "version": "1.0.0",
+  "description": "Rating service for FlixSync movie recommendation platform",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "func start",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src/**/*.ts",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@azure/cosmos": "^4.0.0",
+    "@azure/functions": "^4.8.0",
+    "@azure/identity": "^4.0.0",
+    "@flixsync/flixsync-shared-library": "^1.0.0",
+    "@types/uuid": "^10.0.0",
+    "dotenv": "^16.3.1",
+    "jsonwebtoken": "^9.0.2",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.2",
+    "@types/node": "^20.4.5",
+    "@typescript-eslint/eslint-plugin": "^6.2.1",
+    "@typescript-eslint/parser": "^6.2.1",
+    "@vitest/coverage-v8": "^1.0.0",
+    "eslint": "^8.45.0",
+    "rimraf": "^5.0.1",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.1.6",
+    "vitest": "^1.0.0"
+  },
+  "keywords": [
+    "rating",
+    "reviews",
+    "microservice",
+    "azure",
+    "cosmosdb"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "author": "FlixSync Team",
+  "license": "MIT"
+}
