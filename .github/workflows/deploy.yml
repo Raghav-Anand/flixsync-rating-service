@@ -83,6 +83,10 @@ jobs:
 
     - name: Create Azure Resources
       run: |
+        # Ensure Application Insights extension is installed
+        echo "Ensuring Application Insights extension is available..."
+        az extension add --name application-insights --upgrade --yes 2>/dev/null || true
+
         # Create resource group if it doesn't exist
         if ! az group show --name ${{ env.AZURE_RESOURCE_GROUP }} &>/dev/null; then
           echo "Creating resource group ${{ env.AZURE_RESOURCE_GROUP }}..."
@@ -129,25 +133,29 @@ jobs:
             --app ${{ env.AZURE_FUNCTIONAPP_NAME }}-insights \
             --location ${{ env.AZURE_LOCATION }} \
             --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --application-type web
+            --application-type web \
+            --kind web
+
+          echo "Waiting for Application Insights to be ready..."
+          sleep 10
         else
           echo "Application Insights ${{ env.AZURE_FUNCTIONAPP_NAME }}-insights already exists"
         fi
 
         # Get the Application Insights connection string
+        echo "Retrieving Application Insights connection string..."
         APPINSIGHTS_CONNECTION_STRING=$(az monitor app-insights component show \
           --app ${{ env.AZURE_FUNCTIONAPP_NAME }}-insights \
           --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
           --query connectionString -o tsv)
 
-        echo "Application Insights connection string retrieved"
+        if [ -z "$APPINSIGHTS_CONNECTION_STRING" ]; then
+          echo "ERROR: Failed to retrieve Application Insights connection string"
+          exit 1
+        fi
 
-        # Configure Function App to use Application Insights
-        echo "Configuring Function App with Application Insights..."
-        az functionapp config appsettings set \
-          --name ${{ env.AZURE_FUNCTIONAPP_NAME }} \
-          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-          --settings APPLICATIONINSIGHTS_CONNECTION_STRING="$APPINSIGHTS_CONNECTION_STRING"
+        echo "Application Insights connection string retrieved successfully"
+        echo "Connection string starts with: ${APPINSIGHTS_CONNECTION_STRING:0:50}..."
 
         # Enable Managed Identity for Function App
         echo "Enabling managed identity for Function App..."
@@ -176,10 +184,18 @@ jobs:
     - name: Get Application Insights Connection String
       id: appinsights
       run: |
+        echo "Retrieving Application Insights connection string for app settings..."
         CONN_STRING=$(az monitor app-insights component show \
           --app ${{ env.AZURE_FUNCTIONAPP_NAME }}-insights \
           --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
           --query connectionString -o tsv)
+
+        if [ -z "$CONN_STRING" ]; then
+          echo "ERROR: Failed to retrieve Application Insights connection string"
+          exit 1
+        fi
+
+        echo "Connection string retrieved successfully"
         echo "connection-string=$CONN_STRING" >> $GITHUB_OUTPUT
 
     - name: Configure Function App Settings
