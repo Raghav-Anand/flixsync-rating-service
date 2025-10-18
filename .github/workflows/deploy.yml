@@ -122,6 +122,33 @@ jobs:
           echo "Function app ${{ env.AZURE_FUNCTIONAPP_NAME }} already exists"
         fi
 
+        # Create Application Insights if it doesn't exist
+        if ! az monitor app-insights component show --app ${{ env.AZURE_FUNCTIONAPP_NAME }}-insights --resource-group ${{ env.AZURE_RESOURCE_GROUP }} &>/dev/null; then
+          echo "Creating Application Insights ${{ env.AZURE_FUNCTIONAPP_NAME }}-insights..."
+          az monitor app-insights component create \
+            --app ${{ env.AZURE_FUNCTIONAPP_NAME }}-insights \
+            --location ${{ env.AZURE_LOCATION }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --application-type web
+        else
+          echo "Application Insights ${{ env.AZURE_FUNCTIONAPP_NAME }}-insights already exists"
+        fi
+
+        # Get the Application Insights connection string
+        APPINSIGHTS_CONNECTION_STRING=$(az monitor app-insights component show \
+          --app ${{ env.AZURE_FUNCTIONAPP_NAME }}-insights \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --query connectionString -o tsv)
+
+        echo "Application Insights connection string retrieved"
+
+        # Configure Function App to use Application Insights
+        echo "Configuring Function App with Application Insights..."
+        az functionapp config appsettings set \
+          --name ${{ env.AZURE_FUNCTIONAPP_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --settings APPLICATIONINSIGHTS_CONNECTION_STRING="$APPINSIGHTS_CONNECTION_STRING"
+
         # Enable Managed Identity for Function App
         echo "Enabling managed identity for Function App..."
         az functionapp identity assign \
@@ -146,6 +173,15 @@ jobs:
           --scope "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/${{ env.AZURE_RESOURCE_GROUP }}/providers/Microsoft.DocumentDB/databaseAccounts/${{ env.COSMOS_ACCOUNT }}" \
           || echo "Role assignment already exists or failed - continuing..."
 
+    - name: Get Application Insights Connection String
+      id: appinsights
+      run: |
+        CONN_STRING=$(az monitor app-insights component show \
+          --app ${{ env.AZURE_FUNCTIONAPP_NAME }}-insights \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --query connectionString -o tsv)
+        echo "connection-string=$CONN_STRING" >> $GITHUB_OUTPUT
+
     - name: Configure Function App Settings
       uses: azure/appservice-settings@v1
       with:
@@ -160,6 +196,11 @@ jobs:
             {
               "name": "AzureWebJobsFeatureFlags",
               "value": "EnableWorkerIndexing",
+              "slotSetting": false
+            },
+            {
+              "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+              "value": "${{ steps.appinsights.outputs.connection-string }}",
               "slotSetting": false
             },
             {
